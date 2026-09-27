@@ -1,21 +1,23 @@
-"""Everyday Benefits — 401(k) Reddit 趋势 Dashboard.
+"""Everyday Benefits — 401(k) Reddit trends dashboard.
 
-数据源: r/401k + r/Retirement401k 约 8,100 帖,按关键词 first-match 粗分类,
-按月聚合。详细方法见页面底部的说明。
+Data: ~8,100 posts from r/401k + r/Retirement401k, grouped by keyword
+first-match classification, aggregated monthly. See the method note
+at the bottom of the page for details.
 """
 import pandas as pd
 import streamlit as st
 
-# ---------- 页面配置 ----------
+# ---------- Page config ----------
 st.set_page_config(
-    page_title="401(k) Reddit 趋势 | Everyday Benefits",
+    page_title="401(k) Reddit Trends | Everyday Benefits",
     page_icon="📊",
     layout="wide",
 )
 
-# ---------- 读数据 ----------
-# @st.cache_data: 数据只读一次并缓存,之后每次互动(点选框/滑杆)重跑脚本时
-# 不会重复读文件。这是 Streamlit 最核心的性能机制:脚本每次互动都会从头重跑。
+# ---------- Load data ----------
+# @st.cache_data: the CSV is read once and cached. Every widget interaction
+# re-runs the whole script top to bottom, but cached results are reused
+# instead of re-reading the file. This is Streamlit's core performance trick.
 @st.cache_data
 def load_data():
     df = pd.read_csv("data/monthly_topics.csv", parse_dates=["month"])
@@ -23,39 +25,40 @@ def load_data():
 
 df = load_data()
 
-# ---------- 标题区 ----------
+# ---------- Header ----------
 st.title("What are people asking about their 401(k)?")
 st.markdown(
-    "基于约 **8,100** 条 Reddit 帖子 (r/401k + r/Retirement401k, 2024-09 → 2026-09) "
-    "的话题趋势。数据每月更新。\n\n"
-    "📖 完整分析文章: [What 8,000 Reddit Posts Tell Us About America's 401(k) Questions]"
+    "Topic trends from about **8,100** Reddit posts "
+    "(r/401k + r/Retirement401k, Sep 2024 → Sep 2026). Updated monthly.\n\n"
+    "📖 Full analysis: [What 8,000 Reddit Posts Tell Us About America's 401(k) Questions]"
     "(https://everydaybenefits.work/learn/reddit-401k-trends)"
 )
 
-# 年度划分(与文章一致,按整月近似)
+# Year split (matches the article, approximated to whole months)
 df["period"] = df["month"].apply(
-    lambda m: "Year 1 (2024-09–2025-08)"
+    lambda m: "Year 1 (Sep 2024–Aug 2025)"
     if m < pd.Timestamp("2025-09-01")
-    else "Year 2 (2025-09–2026-09)"
+    else "Year 2 (Sep 2025–Sep 2026)"
 )
 
-# ---------- 侧边栏:筛选器 ----------
-# Streamlit 的交互逻辑:每个 widget (multiselect/radio/slider) 都是一个变量,
-# 用户一改,整个脚本从上到下重跑一遍,用新值重新渲染。不需要写回调函数。
-st.sidebar.header("筛选")
+# ---------- Sidebar: filters ----------
+# How Streamlit interaction works: each widget (multiselect/radio/slider)
+# is just a variable. When the user changes one, the entire script re-runs
+# from top to bottom with the new values and re-renders. No callbacks needed.
+st.sidebar.header("Filters")
 all_topics = sorted(df["label"].unique())
 
-# 默认选中总量最大的 5 个话题,避免 16 条线糊在一起
+# Default to the 5 biggest topics so 16 lines don't turn into spaghetti
 top5 = (
     df.groupby("label")["posts"].sum().sort_values(ascending=False).head(5).index.tolist()
 )
-topics = st.sidebar.multiselect("话题", all_topics, default=top5)
+topics = st.sidebar.multiselect("Topics", all_topics, default=top5)
 
-metric = st.sidebar.radio("指标", ["占比 %", "帖子数"], index=0)
+metric = st.sidebar.radio("Metric", ["Share %", "Post count"], index=0)
 
 months = sorted(df["month"].unique())
 date_range = st.sidebar.slider(
-    "月份范围",
+    "Month range",
     min_value=months[0].date(),
     max_value=months[-1].date(),
     value=(months[0].date(), months[-1].date()),
@@ -63,53 +66,56 @@ date_range = st.sidebar.slider(
 )
 
 if not topics:
-    st.warning("请至少选择一个话题。")
+    st.warning("Please select at least one topic.")
     st.stop()
 
-# ---------- 过滤 ----------
+# ---------- Filter ----------
 mask = (
     df["label"].isin(topics)
     & (df["month"] >= pd.Timestamp(date_range[0]))
     & (df["month"] <= pd.Timestamp(date_range[1]))
 )
 fdf = df[mask].copy()
-value_col = "share_pct" if metric == "占比 %" else "posts"
+value_col = "share_pct" if metric == "Share %" else "posts"
 
-# ---------- 图 1:月度趋势 ----------
-st.subheader(f"月度趋势 — {metric}")
+# ---------- Chart 1: monthly trend ----------
+st.subheader(f"Monthly trend — {metric}")
 pivot = fdf.pivot_table(index="month", columns="label", values=value_col, aggfunc="sum")
 st.line_chart(pivot, height=380)
 
-# ---------- 图 2:年度对比 ----------
-yoy_title = "年度对比 — 各话题占比变化" if metric == "占比 %" else "年度对比 — 各话题帖子数"
+# ---------- Chart 2: year-over-year ----------
+yoy_title = (
+    "Year-over-year — topic share" if metric == "Share %" else "Year-over-year — post count"
+)
 st.subheader(yoy_title)
 yoy = (
     fdf.groupby(["period", "label"])[value_col].mean().reset_index()
-    if metric == "占比 %"
+    if metric == "Share %"
     else fdf.groupby(["period", "label"])["posts"].sum().reset_index()
 )
 yoy_pivot = yoy.pivot(index="label", columns="period", values=value_col)
 st.bar_chart(yoy_pivot, height=380)
 
-# ---------- 数据表 ----------
-with st.expander("查看原始数据"):
+# ---------- Data table ----------
+with st.expander("View raw data"):
     show = fdf[["month", "label", "posts", "month_total", "share_pct"]].sort_values(
         ["month", "posts"], ascending=[True, False]
     )
     show["month"] = show["month"].dt.strftime("%Y-%m")
     st.dataframe(show, use_container_width=True, hide_index=True)
     csv = show.to_csv(index=False).encode("utf-8")
-    st.download_button("下载 CSV", csv, "monthly_401k_topics.csv", "text/csv")
+    st.download_button("Download CSV", csv, "monthly_401k_topics.csv", "text/csv")
 
-# ---------- 方法说明 ----------
-with st.expander("方法与注意事项"):
+# ---------- Method note ----------
+with st.expander("Method & caveats"):
     st.markdown(
         """
-- **分类方法**: 关键词 first-match 粗分类,同一套规则应用于两个年度,相对变化有意义,
-  但绝对数字不能当作严格研究结论。
-- **数据缺口**: r/401k 在 2025 年年中之前有明显存档缺口,2025 年年中之前的月份
-  主要由 r/Retirement401k 驱动,帖子量偏少。
-- **更新频率**: 月度批次更新,非实时。
+- **Classification**: keyword first-match grouping. The same rules were applied
+  to both years, so relative changes are meaningful — but treat absolute
+  numbers as directional, not research-grade coding.
+- **Data gap**: r/401k has a clear archive gap before mid-2025, so months
+  before then are driven mostly by r/Retirement401k and post counts are lower.
+- **Update cadence**: monthly batches, not real-time.
 - Educational content only — not financial or tax advice.
 """
     )
